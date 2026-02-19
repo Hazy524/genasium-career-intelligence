@@ -1,33 +1,28 @@
 import os
-from dotenv import load_dotenv
-
-load_dotenv()
+import json
+import re
+import time
+import hashlib
 
 import streamlit as st
 import pandas as pd
-from groq import Groq
 import fitz  # PyMuPDF for faster text extraction
+from dotenv import load_dotenv
+from groq import Groq
 from serpapi import GoogleSearch
-import json
-import re
-from init_chroma import get_chroma
-import time
-import hashlib
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+
+from init_chroma import get_chroma
+
 from core.job_sources import get_job_source_label, get_job_link, is_trusted_job
 from core.logger import get_logger
 from core.scoring import stabilize_scores
 from core.resume_processing import build_full_resume_representation
 from core.job_dedupe import dedupe_jobs
-from core.job_filtering import (
-    pick_apply_link_for_source,
-    has_trusted_destination,
-)
+
+load_dotenv()
 logger = get_logger()
-
-st.caption("✅ job_sources module imported")
-
 
 def clamp_int(x, lo=0, hi=100, default=50) -> int:
     try:
@@ -460,11 +455,20 @@ RESUME TEXT:
         data["ats_score"] = clamp_int(data.get("ats_score"), default=50)
         data["experience_depth"] = clamp_int(data.get("experience_depth"), default=50)
 
-        if not isinstance(data.get("missing_hard_skills"), list): data["missing_hard_skills"] = []
-        if not isinstance(data.get("missing_soft_skills"), list): data["missing_soft_skills"] = []
-        if not isinstance(data.get("missing_keywords"), list): data["missing_keywords"] = []
-        if not isinstance(data.get("improvement_tips"), list): data["improvement_tips"] = []
-        if not isinstance(data.get("growth_plan"), list): data["growth_plan"] = []
+        if not isinstance(data.get("missing_hard_skills"), list):
+            data["missing_hard_skills"] = []
+
+        if not isinstance(data.get("missing_soft_skills"), list):
+            data["missing_soft_skills"] = []
+
+        if not isinstance(data.get("missing_keywords"), list):
+            data["missing_keywords"] = []
+
+        if not isinstance(data.get("improvement_tips"), list):
+            data["improvement_tips"] = []
+
+        if not isinstance(data.get("growth_plan"), list):
+            data["growth_plan"] = []
 
         if not isinstance(data.get("seniority"), str) or not data["seniority"].strip():
             data["seniority"] = "Unknown"
@@ -583,11 +587,20 @@ RESUME TEXT:
             if not isinstance(data["skills"].get(k), list):
                 data["skills"][k] = []
 
-        if not isinstance(data.get("experience"), list): data["experience"] = []
-        if not isinstance(data.get("education"), list): data["education"] = []
-        if not isinstance(data.get("projects"), list): data["projects"] = []
-        if not isinstance(data.get("strengths"), list): data["strengths"] = []
-        if not isinstance(data.get("weaknesses"), list): data["weaknesses"] = []
+        if not isinstance(data.get("experience"), list):
+            data["experience"] = []
+
+        if not isinstance(data.get("education"), list):
+            data["education"] = []
+
+        if not isinstance(data.get("projects"), list):
+            data["projects"] = []
+
+        if not isinstance(data.get("strengths"), list):
+            data["strengths"] = []
+
+        if not isinstance(data.get("weaknesses"), list):
+            data["weaknesses"] = []
 
         return data
 
@@ -728,9 +741,9 @@ with st.sidebar:
             st.error("Vault Connection: OFFLINE")
         else:
             vault_stats = vector_collection.count()
-            st.caption(f"Vector Database: **ACTIVE**")
+            st.caption("Vector Database: **ACTIVE**")
             st.caption(f"Knowledge Fragments: **{vault_stats}**")
-            st.caption(f"Engine: **Llama-3.3-70B**")
+            st.caption("Engine: **Llama-3.3-70B**")
 
             if vault_stats > 0:
                 st.success("Precision Retrieval Enabled", icon="🎯")
@@ -1217,14 +1230,6 @@ if st.button("Find Placements"):
     st.session_state.global_skill_stats = {"matched": {}, "missing": {}, "jobs_count": 0}
 
     scored_rows = []
-
-    # Ensure memory bank exists once resume text exists
-    if "build_memory_bank" in globals():
-        if (st.session_state.get("resume_text") or st.session_state.get("full_resume_representation")) and not st.session_state.get("memory_bank"):
-            st.warning("Generating resume memory bank...")
-            st.session_state["memory_bank"] = build_memory_bank(
-                st.session_state.get("full_resume_representation") or st.session_state.get("resume_text", "")
-            )
 
     # --- SCORE JOBS ---
     for j in candidate_jobs:
