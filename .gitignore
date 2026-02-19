@@ -19,3 +19,7 @@ secrets.toml
 db/
 chroma_storage/
 *.sqlite3
+
+# Logs
+logs/
+*.log
