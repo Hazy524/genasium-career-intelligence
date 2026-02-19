@@ -19,6 +19,7 @@ from core.job_sources import get_job_source_label, get_job_link, is_trusted_job
 from core.logger import get_logger
 from core.scoring import stabilize_scores
 from core.resume_processing import build_full_resume_representation
+from core.job_dedupe import dedupe_jobs
 from core.job_filtering import (
     pick_apply_link_for_source,
     has_trusted_destination,
@@ -1140,21 +1141,7 @@ if st.button("Find Placements"):
         except Exception:
             continue
 
-    # --- SMART DEDUPLICATION (title + company + location + source + link) ---
-    unique_jobs = {}
-    for j in all_jobs:
-        title = (j.get("title") or "").strip().lower()
-        company = (j.get("company_name") or "").strip().lower()
-        location = (j.get("location") or "").strip().lower()
-        source = (get_job_source_label(j) or "").strip().lower()
-        link = (get_job_link(j) or j.get("link") or "").strip().lower()
-
-        key = f"{title}|{company}|{location}|{source}|{link}"
-
-        if key not in unique_jobs:
-            unique_jobs[key] = j
-
-    all_jobs = list(unique_jobs.values())
+    all_jobs = dedupe_jobs(all_jobs)
 
     # --- SORT BY SOURCE PRIORITY (LinkedIn/Indeed/etc first) ---
     all_jobs = sorted(all_jobs, key=job_source_priority)
