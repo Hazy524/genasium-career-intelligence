@@ -1,3 +1,8 @@
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import streamlit as st
 import pandas as pd
 from groq import Groq
@@ -13,6 +18,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from core.job_sources import get_job_source_label, get_job_link, is_trusted_job
 from core.logger import get_logger
 from core.scoring import stabilize_scores
+from core.resume_processing import build_full_resume_representation
 logger = get_logger()
 
 st.caption("✅ job_sources module imported")
@@ -595,114 +601,6 @@ RESUME TEXT:
             "strengths": [],
             "weaknesses": []
         }
-    
-def build_full_resume_representation(raw_resume_text: str, memory_bank: dict, role: str = "", core_field: str = "") -> str:
-    """
-    Creates a single unified resume string for consistent use across:
-    - LLM scoring
-    - TF-IDF lexical score
-    - Vector embeddings (later step)
-    """
-    raw_resume_text = (raw_resume_text or "").strip()
-    memory_bank = memory_bank or {}
-
-    # --- skills (flatten all skill groups)
-    skills_flat = []
-    skills_dict = memory_bank.get("skills", {}) or {}
-    for group in skills_dict.values():
-        if isinstance(group, list):
-            for s in group:
-                if isinstance(s, str) and s.strip():
-                    skills_flat.append(s.strip())
-    # de-dupe while preserving order
-    seen = set()
-    skills_flat = [x for x in skills_flat if not (x.lower() in seen or seen.add(x.lower()))]
-
-    # --- experience (role/company/duration + achievements + technologies)
-    exp_lines = []
-    for e in (memory_bank.get("experience") or []):
-        if not isinstance(e, dict):
-            continue
-        head = " | ".join([str(e.get("role") or "").strip(),
-                           str(e.get("company") or "").strip(),
-                           str(e.get("duration") or "").strip()]).strip(" |")
-        if head:
-            exp_lines.append(head)
-
-        ach = e.get("achievements") or []
-        if isinstance(ach, list):
-            for a in ach[:4]:
-                if isinstance(a, str) and a.strip():
-                    exp_lines.append(f"- {a.strip()}")
-
-        tech = e.get("technologies_used") or []
-        if isinstance(tech, list) and tech:
-            tech_clean = [str(t).strip() for t in tech if str(t).strip()]
-            if tech_clean:
-                exp_lines.append("Tech/Tools: " + ", ".join(tech_clean[:15]))
-
-    # --- education
-    edu_lines = []
-    for ed in (memory_bank.get("education") or []):
-        if not isinstance(ed, dict):
-            continue
-        line = " | ".join([str(ed.get("degree") or "").strip(),
-                           str(ed.get("institution") or "").strip(),
-                           str(ed.get("years") or "").strip()]).strip(" |")
-        if line:
-            edu_lines.append(line)
-
-    # --- projects
-    proj_lines = []
-    for p in (memory_bank.get("projects") or []):
-        if not isinstance(p, dict):
-            continue
-        name = str(p.get("name") or "").strip()
-        desc = str(p.get("description") or "").strip()
-        tech = p.get("tech_stack") or []
-        tech_clean = [str(t).strip() for t in tech if str(t).strip()] if isinstance(tech, list) else []
-        block = " | ".join([x for x in [name, desc] if x])
-        if block:
-            proj_lines.append(block)
-        if tech_clean:
-            proj_lines.append("Stack: " + ", ".join(tech_clean[:15]))
-
-    strengths = memory_bank.get("strengths") or []
-    weaknesses = memory_bank.get("weaknesses") or []
-
-    strengths = [s.strip() for s in strengths if isinstance(s, str) and s.strip()][:8]
-    weaknesses = [s.strip() for s in weaknesses if isinstance(s, str) and s.strip()] [:8]
-
-    # --- final unified string
-    out = f"""
-RESUME SUMMARY:
-Role (detected): {role or "Unknown"}
-Core field: {core_field or "Unknown"}
-
-Cleaned Resume Text:
-{raw_resume_text}
-
-Skills:
-{", ".join(skills_flat) if skills_flat else "None listed"}
-
-Education:
-{"; ".join(edu_lines) if edu_lines else "None listed"}
-
-Work Experience:
-{"; ".join(exp_lines) if exp_lines else "None listed"}
-
-Projects:
-{"; ".join(proj_lines) if proj_lines else "None listed"}
-
-Strengths:
-{", ".join(strengths) if strengths else "N/A"}
-
-Weaknesses:
-{", ".join(weaknesses) if weaknesses else "N/A"}
-""".strip()
-
-    return out
-
 
 # --- 1. THE OS CORE ---
 st.set_page_config(page_title="GENASIUM OS", layout="wide", page_icon="📟")
@@ -760,14 +658,17 @@ except Exception:
 
 # --- AI & SEARCH CONFIG ---
 # Using get for safer secrets handling
-GROQ_KEY = st.secrets.get("GROQ_API_KEY")
-SERP_KEY = st.secrets.get("SERPAPI_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY")
 
-if not GROQ_KEY or not SERP_KEY:
+st.write("DEBUG GROQ key loaded:", "YES" if GROQ_API_KEY else "NO")
+st.write("DEBUG GROQ key prefix:", (GROQ_API_KEY[:6] + "..." if GROQ_API_KEY else "None"))
+
+if not GROQ_API_KEY or not SERPAPI_API_KEY:
     st.error("Credential Error: Missing API keys in secrets.toml.")
     st.stop()
 
-client = Groq(api_key=GROQ_KEY)
+client = Groq(api_key=GROQ_API_KEY)
 
 # --- 2. THE OS SIDEBAR ---
 with st.sidebar:
@@ -1242,7 +1143,7 @@ if st.button("Find Placements"):
                 "gl": "my",
                 "hl": "en",
                 "location": city_query,
-                "api_key": SERP_KEY
+                "api_key": SERPAPI_API_KEY
             })
             result = search.get_dict()
             last_result = result
