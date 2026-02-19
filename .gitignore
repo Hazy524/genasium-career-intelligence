@@ -10,3 +10,12 @@ __pycache__/
 
 # Windows
 desktop.ini
+
+# Streamlit secrets
+secrets.toml
+.streamlit/
+
+# Chroma DB storage
+db/
+chroma_storage/
+*.sqlite3

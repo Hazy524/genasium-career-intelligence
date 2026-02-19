@@ -5,12 +5,15 @@ import fitz  # PyMuPDF for faster text extraction
 from serpapi import GoogleSearch
 import json
 import re
-from db.init_chroma import get_chroma
+from init_chroma import get_chroma
 import time
 import hashlib
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from core.job_sources import get_job_source_label, get_job_link, is_trusted_job
+from core.logger import get_logger
+logger = get_logger()
+
 st.caption("✅ job_sources module imported")
 
 
@@ -1131,6 +1134,7 @@ if st.session_state.resume_text:
 
     with st.expander("🧠 Resume Memory Bank"):
         mb = st.session_state.get("memory_bank", None)
+        st.write("DEBUG memory_bank:", st.session_state.get("memory_bank"))
         if mb is not None:
             st.json(mb)
         else:
@@ -1223,6 +1227,13 @@ def has_trusted_destination(job: dict) -> bool:
 
 # --- BUTTON ---
 if st.button("Find Placements"):
+    # Clear old job results so each search is fresh
+    st.session_state.pop("last_jobs", None)
+    st.session_state.pop("jobs_cache", None)
+    st.session_state.pop("all_jobs", None)
+    st.session_state.pop("filtered_jobs", None)
+    st.session_state.pop("candidate_jobs", None)
+
     st.session_state.searching = True
     # --- Heatmap reset for this search run ---
     st.session_state.global_skill_stats = {"matched": {}, "missing": {}, "jobs_count": 0}
@@ -1297,12 +1308,16 @@ if st.button("Find Placements"):
         except Exception:
             continue
 
-    # --- SMART DEDUPLICATION (title + company based) ---
+    # --- SMART DEDUPLICATION (title + company + location + source + link) ---
     unique_jobs = {}
     for j in all_jobs:
         title = (j.get("title") or "").strip().lower()
         company = (j.get("company_name") or "").strip().lower()
-        key = f"{title}|{company}"
+        location = (j.get("location") or "").strip().lower()
+        source = (get_job_source_label(j) or "").strip().lower()
+        link = (get_job_link(j) or j.get("link") or "").strip().lower()
+
+        key = f"{title}|{company}|{location}|{source}|{link}"
 
         if key not in unique_jobs:
             unique_jobs[key] = j
@@ -1314,7 +1329,9 @@ if st.button("Find Placements"):
 
     # --- OPTIONAL: TRUSTED SOURCES ONLY (STRICT) ---
     if trusted_only:
+        st.write("DEBUG jobs before trusted filter:", len(all_jobs))
         all_jobs = [j for j in all_jobs if is_trusted_job(j)]
+        st.write("DEBUG jobs after trusted filter:", len(all_jobs))
         if not all_jobs:
             st.warning("No trusted-source jobs found for this query/city. Try a different city/title or broaden the query.")
             st.stop()
@@ -1356,6 +1373,23 @@ if st.button("Find Placements"):
             if len(filtered_jobs) >= 10:
                 break
 
+    # --- avoid repeating jobs already shown in this session ---
+    shown = st.session_state.get("shown_job_keys", set())
+    fresh = []
+    for j in all_jobs:
+        title = (j.get("title") or "").strip().lower()
+        company = (j.get("company_name") or "").strip().lower()
+        location = (j.get("location") or "").strip().lower()
+        key = f"{title}|{company}|{location}"
+
+        if key in shown:
+            continue
+        fresh.append(j)
+
+    # If everything is a repeat, fall back to original list
+    if fresh:
+        all_jobs = fresh
+
     # Score MORE than 10 first, then rank by match score
     candidate_jobs = filtered_jobs[:30]
 
@@ -1364,6 +1398,14 @@ if st.button("Find Placements"):
     st.session_state.global_skill_stats = {"matched": {}, "missing": {}, "jobs_count": 0}
 
     scored_rows = []
+
+    # Ensure memory bank exists once resume text exists
+    if "build_memory_bank" in globals():
+        if (st.session_state.get("resume_text") or st.session_state.get("full_resume_representation")) and not st.session_state.get("memory_bank"):
+            st.warning("Generating resume memory bank...")
+            st.session_state["memory_bank"] = build_memory_bank(
+                st.session_state.get("full_resume_representation") or st.session_state.get("resume_text", "")
+            )
 
     # --- SCORE JOBS ---
     for j in candidate_jobs:
@@ -1374,7 +1416,7 @@ if st.button("Find Placements"):
         job_desc_clean = clean_job_description(job_desc)
         job_desc_clean = (job_desc_clean or "").strip()
 
-        job_text = job_desc_clean  # canonical job text
+        job_text = clean_job_description(build_job_text(j))
 
         resume_text_full = st.session_state.get("full_resume_representation") or st.session_state.get("resume_text", "")
 
@@ -1469,6 +1511,7 @@ if st.button("Find Placements"):
             st.session_state.global_skill_stats["jobs_count"] += 1
 
         except Exception as e:
+            logger.exception("LLM match scoring failed (fallback used): %s", e)
             # --- Token-safe fallback: do NOT break heatmap when Groq 429 happens ---
             st.session_state["last_llm_error"] = str(e)
 
@@ -1515,6 +1558,16 @@ if st.button("Find Placements"):
             (0.35 * semantic_score) +
             (0.20 * lexical_score)
         ))
+
+        logger.info(
+            "Scoring | Title=%s | LLM=%s | Semantic=%s | Lexical=%s | Final=%s",
+            j.get("title"),
+            llm_match_score,
+            semantic_score,
+            lexical_score,
+            final_smart_score,
+        )
+
         final_smart_score = max(0, min(100, final_smart_score))
 
         scored_rows.append({
@@ -1535,6 +1588,16 @@ if st.button("Find Placements"):
     # --- SORT + DISPLAY TOP 10 ---
     scored_rows.sort(key=lambda r: r["final_smart_score"], reverse=True)
     top_rows = scored_rows[:10]
+
+    # remember shown jobs so next click rotates results
+    shown = st.session_state.get("shown_job_keys", set())
+    for row in top_rows:
+        j = row["job"]
+        title = (j.get("title") or "").strip().lower()
+        company = (j.get("company_name") or "").strip().lower()
+        location = (j.get("location") or "").strip().lower()
+        shown.add(f"{title}|{company}|{location}")
+    st.session_state["shown_job_keys"] = shown
 
     for row in top_rows:
         j = row["job"]
