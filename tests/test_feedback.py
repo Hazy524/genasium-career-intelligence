@@ -1,6 +1,6 @@
 import os
 
-from core.feedback import append_feedback_row, FEEDBACK_CSV
+from core.feedback import append_feedback_row
 
 
 def test_append_feedback_row_creates_file(tmp_path, monkeypatch):
