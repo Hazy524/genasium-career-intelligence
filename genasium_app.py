@@ -20,6 +20,7 @@ from core.logger import get_logger
 from core.scoring import stabilize_scores
 from core.resume_processing import build_full_resume_representation
 from core.job_dedupe import dedupe_jobs
+from core.feedback import append_feedback_row  # keep local to avoid import clutter
 
 load_dotenv()
 logger = get_logger()
@@ -1467,6 +1468,36 @@ if st.button("Find Placements"):
                 link = get_job_link(j)
                 if link:
                     st.link_button("View 🚀", link)
+
+                # --- FEEDBACK (for future ML training) ---
+                fb1, fb2 = st.columns(2)
+                with fb1:
+                    if st.button("👍 Relevant", key=f"fb_up_{job_id}"):
+                        append_feedback_row({
+                            "resume_id": st.session_state.get("resume_hash", "unknown"),
+                            "job_id": job_id,
+                            "label": 1,
+                            "semantic_score": semantic_score,
+                            "lexical_score": lexical_score,
+                            "llm_score": llm_match_score,
+                            "final_score": final_smart_score,
+                            "source": get_job_source_label(j),
+                        })
+                        st.success("Saved 👍")
+
+                with fb2:
+                    if st.button("👎 Not relevant", key=f"fb_dn_{job_id}"):
+                        append_feedback_row({
+                            "resume_id": st.session_state.get("resume_hash", "unknown"),
+                            "job_id": job_id,
+                            "label": 0,
+                            "semantic_score": semantic_score,
+                            "lexical_score": lexical_score,
+                            "llm_score": llm_match_score,
+                            "final_score": final_smart_score,
+                            "source": get_job_source_label(j),
+                        })
+                        st.info("Saved 👎")
 
             with st.expander("📊 Detailed Intelligence & Skill Gap"):
                 st.caption("Hybrid Match Breakdown")
